@@ -1,21 +1,19 @@
 /**
  * Head Pose Data Collector — Web App (Pure Frontend)
  * ====================================================
- * Teknologi : 6DRepNet ONNX Runtime Web + JSZip
+ * Teknologi : MobileNetV3-Small Head Pose ONNX Runtime Web + JSZip
  * Platform  : Browser modern (Chrome/Firefox/Safari) — HP & Laptop
  * Backend   : TIDAK ADA — semua berjalan di browser
  *
  * Alur:
  *  1. User mengisi form registrasi → tekan "Mulai Sesi Foto"
- *  2. Runtime ONNX dimuat dari CDN dan bobot 6DRepNet dibaca dari folder web
+ *  2. Runtime ONNX dan model pose ringan dimuat sekali dari CDN
  *  3. Kamera aktif → deteksi sudut kepala real-time
  *  4. Saat sudut pas dan stabil → foto otomatis diambil + disimpan di memori
  *  5. Saat selesai → semua foto dikemas jadi 1 file .zip → download ke HP/laptop
  */
 
-// Bundle lengkap diperlukan agar backend WebGPU tersedia untuk model dengan
-// external weights (pose_estimator.data).
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.all.min.mjs";
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.wasm.min.mjs";
 
 // ─────────────────────────────────────────────────────────────
 // PRESET SUDUT POSE
@@ -27,19 +25,19 @@ const PRESETS = {
 };
 
 const CAPTURE_COOLDOWN_MS = 1500; // Cooldown 1.5 detik setelah foto untuk cegah jepret ganda
-// Model besar di-host terpisah agar GitHub Pages tidak terkena batas ukuran file.
-const POSE_MODEL_URL = "https://huggingface.co/AxVxRxA/headpose-6drepnet/resolve/main/pose_estimator.onnx";
-const POSE_DATA_URL = "https://huggingface.co/AxVxRxA/headpose-6drepnet/resolve/main/pose_estimator.data";
+// MobileNetV3-Small hanya ±6 MB, satu file, dan responsif di Chrome Android.
+// File di-host pada repository GitHub Pages yang sama agar tidak terkena CORS.
+const POSE_MODEL_URL = "./mobilenetv3_small.onnx";
 
 // ─────────────────────────────────────────────────────────────
 // STATE GLOBAL
 // ─────────────────────────────────────────────────────────────
 let config            = null;   // Konfigurasi sesi dari form registrasi
-let poseSession       = null;   // Instance 6DRepNet ONNX Runtime Web
+let poseSession       = null;   // Instance MobileNetV3-Small ONNX Runtime Web
 let videoStream       = null;   // MediaStream dari kamera
 let currentFacingMode = "user"; // "user" (kamera depan) atau "environment" (kamera belakang)
 let rafId             = null;   // ID requestAnimationFrame loop
-let lastDetectMs      = 0;      // Timestamp inferensi terakhir (throttle ~8fps)
+let lastDetectMs      = 0;      // Timestamp inferensi terakhir (throttle ~10fps)
 let lastCaptureMs     = 0;      // Timestamp capture terakhir
 let lastPose          = { ok: false, yaw: 0, pitch: 0, roll: 0 };
 
@@ -163,22 +161,17 @@ function getGuideCrop() {
   return guideCanvas;
 }
 
-/** Menjalankan 6DRepNet pada crop panduan tanpa face/landmark detector. */
+/** Menjalankan MobileNetV3-Small pada crop panduan tanpa face/landmark detector. */
 async function estimatePoseFromGuide() {
   const crop = getGuideCrop();
   if (!crop || !poseSession) return null;
 
-  // Samakan preprocessing dengan 6DRepNet Python: resize sisi terpendek,
-  // center crop 224×224, RGB, lalu normalisasi ImageNet.
+  // Samakan preprocessing dengan model sumber: resize langsung ke 224×224,
+  // RGB, lalu normalisasi ImageNet.
   const size = 224;
-  const scale = Math.max(size / crop.width, size / crop.height);
-  const drawW = crop.width * scale;
-  const drawH = crop.height * scale;
   poseCanvas.width = size;
   poseCanvas.height = size;
-  poseCtx.fillStyle = "black";
-  poseCtx.fillRect(0, 0, size, size);
-  poseCtx.drawImage(crop, (size - drawW) / 2, (size - drawH) / 2, drawW, drawH);
+  poseCtx.drawImage(crop, 0, 0, size, size);
 
   const pixels = poseCtx.getImageData(0, 0, size, size).data;
   const input = new Float32Array(3 * size * size);
@@ -192,7 +185,7 @@ async function estimatePoseFromGuide() {
     input[2 * plane + i] = (pixels[p + 2] / 255 - mean[2]) / std[2];
   }
 
-  const feeds = { image: new ort.Tensor("float32", input, [1, 3, size, size]) };
+  const feeds = { input: new ort.Tensor("float32", input, [1, 3, size, size]) };
   const output = await poseSession.run(feeds);
   const angles = rotationToEuler(output.rotation_matrix.data);
   // Preview kamera depan dicerminkan, maka arah yaw dibalik agar instruksi
@@ -235,24 +228,16 @@ function triggerFlash() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// INISIALISASI 6DREPNET ONNX
+// INISIALISASI MODEL POSE RINGAN
 // ─────────────────────────────────────────────────────────────
 
 async function initPoseEstimator() {
-  // Backend WASM tidak dapat mount external data untuk model ini. WebGPU
-  // diperlukan agar pose_estimator.data tersedia saat sesi dibuat.
-  if (!navigator.gpu) {
-    throw new Error("Browser ini belum mendukung WebGPU. Gunakan Chrome atau Edge versi terbaru.");
-  }
+  // Model satu file memakai WebAssembly sehingga tidak butuh WebGPU/flag khusus.
+  ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
+  ort.env.wasm.numThreads = 1;
   poseSession = await ort.InferenceSession.create(
     POSE_MODEL_URL,
-    {
-      executionProviders: ["webgpu"],
-      // Browser tidak dapat membaca file system seperti Python. Nama `path`
-      // harus identik dengan location di dalam file ONNX; `data` adalah URL
-      // sebenarnya tempat bobot 157 MB diambil.
-      externalData: [{ path: "pose_estimator.data", data: POSE_DATA_URL }],
-    }
+    { executionProviders: ["wasm"] }
   );
 }
 
@@ -378,8 +363,8 @@ async function detectLoop() {
 
   let { ok: poseOk, yaw, pitch, roll } = lastPose;
 
-  // Model penuh diproses sekitar 8 fps agar tetap responsif di browser.
-  if (now - lastDetectMs > 125) {
+  // Model ringan diproses sekitar 10 fps agar stabil di HP.
+  if (now - lastDetectMs > 100) {
     lastDetectMs = now;
     try {
       const estimated = await estimatePoseFromGuide();
@@ -680,7 +665,7 @@ registerForm.addEventListener("submit", async (e) => {
   try {
     if (!poseSession) await initPoseEstimator();
   } catch (err) {
-    alert("Gagal memuat 6DRepNet:\n" + err.message + "\n\nPastikan browser memiliki koneksi internet dan semua file model tersedia.");
+    alert("Gagal memuat model pose ringan:\n" + err.message + "\n\nPastikan browser memiliki koneksi internet.");
     btnStart.disabled = false;
     loadingBox.classList.add("hidden");
     return;
