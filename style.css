@@ -157,6 +157,9 @@ html, body {
   object-fit: cover;
   transform: scaleX(-1); /* Mirror (selfie mode) */
 }
+#video.rear-cam {
+  transform: none; /* Kamera belakang tanpa mirror */
+}
 
 /* ---- CENTER GUIDE BOX (Framing Viewfinder) ---- */
 #center-guide {
@@ -277,6 +280,33 @@ html, body {
 }
 #top-name  { font-size: 0.85rem; font-weight: 700; color: var(--text); }
 #top-id    { font-size: 0.65rem; color: var(--muted); margin-top: 1px; }
+
+.btn-cam-switch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.btn-cam-switch:active {
+  transform: scale(0.95);
+}
+.btn-cam-switch:hover {
+  background: rgba(51, 65, 85, 0.95);
+  border-color: var(--accent);
+}
+.cam-icon {
+  font-size: 0.85rem;
+}
+
 #top-right { text-align: right; }
 #top-count { font-size: 1rem; font-weight: 700; color: var(--text); display: block; }
 #top-done-lbl { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }

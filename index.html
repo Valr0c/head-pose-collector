@@ -42,6 +42,14 @@
         </div>
 
         <div class="field">
+          <label for="inp-camera">Pilihan Kamera</label>
+          <select id="inp-camera">
+            <option value="user" selected>Kamera Depan (Selfie)</option>
+            <option value="environment">Kamera Belakang (Utama / Foto Orang Lain)</option>
+          </select>
+        </div>
+
+        <div class="field">
           <label>Mode Pengambilan: <strong style="color:var(--green)">Auto-Capture Instan (Langsung Foto)</strong></label>
         </div>
 
@@ -87,6 +95,9 @@
         <div id="top-name">—</div>
         <div id="top-id">—</div>
       </div>
+      <button id="btn-switch-cam" class="btn-cam-switch" type="button" title="Ganti Kamera Depan / Belakang">
+        <span class="cam-icon">🔄</span> <span id="cam-mode-lbl">Kamera Depan</span>
+      </button>
       <div id="top-right">
         <span id="top-count">0/0</span>
         <span id="top-done-lbl">Selesai</span>

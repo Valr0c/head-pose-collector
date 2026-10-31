@@ -34,12 +34,13 @@ const CAPTURE_COOLDOWN_MS = 1500; // Cooldown 1.5 detik setelah foto untuk cegah
 // ─────────────────────────────────────────────────────────────
 // STATE GLOBAL
 // ─────────────────────────────────────────────────────────────
-let config         = null;   // Konfigurasi sesi dari form registrasi
-let faceLandmarker = null;   // Instance MediaPipe FaceLandmarker
-let videoStream    = null;   // MediaStream dari kamera
-let rafId          = null;   // ID requestAnimationFrame loop
-let lastDetectMs   = 0;      // Timestamp deteksi terakhir (throttle 30fps)
-let lastCaptureMs  = 0;      // Timestamp capture terakhir
+let config            = null;   // Konfigurasi sesi dari form registrasi
+let faceLandmarker    = null;   // Instance MediaPipe FaceLandmarker
+let videoStream       = null;   // MediaStream dari kamera
+let currentFacingMode = "user"; // "user" (kamera depan) atau "environment" (kamera belakang)
+let rafId             = null;   // ID requestAnimationFrame loop
+let lastDetectMs      = 0;      // Timestamp deteksi terakhir (throttle 30fps)
+let lastCaptureMs     = 0;      // Timestamp capture terakhir
 
 let poseStatus          = {};         // { angle: { captured, filename, timestamp, measuredYaw, ... } }
 let currentTargetIndex  = 0;
@@ -67,6 +68,8 @@ const flashOverlay    = document.getElementById("flash-overlay");
 const topName         = document.getElementById("top-name");
 const topId           = document.getElementById("top-id");
 const topCount        = document.getElementById("top-count");
+const btnSwitchCam    = document.getElementById("btn-switch-cam");
+const camModeLbl      = document.getElementById("cam-mode-lbl");
 
 const targetCard      = document.getElementById("target-card");
 const targetLbl       = document.getElementById("target-lbl");
@@ -175,12 +178,36 @@ async function initMediaPipe() {
 // INISIALISASI KAMERA
 // ─────────────────────────────────────────────────────────────
 
-async function startCamera() {
-  videoStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false,
-  });
+async function startCamera(facing = currentFacingMode) {
+  currentFacingMode = facing;
+
+  // Hentikan stream lama jika sedang berjalan
+  if (videoStream) {
+    videoStream.getTracks().forEach((track) => track.stop());
+    videoStream = null;
+  }
+
+  const isFront = currentFacingMode === "user";
+
+  try {
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: currentFacingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (_) {
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  }
+
   video.srcObject = videoStream;
+
+  // Terapkan class rear-cam (tanpa mirror) jika kamera belakang
+  video.classList.toggle("rear-cam", !isFront);
+  if (camModeLbl) {
+    camModeLbl.textContent = isFront ? "Kamera Depan" : "Kamera Belakang";
+  }
 
   return new Promise((resolve) => {
     video.onloadedmetadata = () => {
@@ -196,10 +223,13 @@ async function startCamera() {
 // ─────────────────────────────────────────────────────────────
 
 function capturePhoto(targetAngle, yaw, pitch, roll) {
-  // Tangkap frame video yang di-mirror (sesuai tampilan di layar)
+  const isFront = currentFacingMode === "user";
   capCtx.save();
-  capCtx.translate(capCanvas.width, 0);
-  capCtx.scale(-1, 1);
+  if (isFront) {
+    // Kamera depan di-mirror agar sesuai tampilan preview selfie
+    capCtx.translate(capCanvas.width, 0);
+    capCtx.scale(-1, 1);
+  }
   capCtx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
   capCtx.restore();
 
@@ -284,8 +314,9 @@ function detectLoop() {
         // Posisi hidung (index 1) untuk koordinat pusat wajah
         const rawX = lm[1].x;
         const rawY = lm[1].y;
-        // Kamera ditampilkan mirrored (scaleX(-1))
-        const screenX = 1.0 - rawX;
+        // Kamera depan di-mirror (scaleX(-1)), kamera belakang tidak di-mirror
+        const isFront = currentFacingMode === "user";
+        const screenX = isFront ? (1.0 - rawX) : rawX;
         const screenY = rawY;
 
         // Toleransi tengah layar
@@ -535,7 +566,7 @@ async function startSession(cfg) {
 
   // Kamera
   try {
-    await startCamera();
+    await startCamera(currentFacingMode);
   } catch (err) {
     alert("Gagal membuka kamera: " + err.message + "\n\nPastikan izin kamera sudah diberikan di browser.");
     screenCamera.classList.remove("active");
@@ -561,6 +592,8 @@ registerForm.addEventListener("submit", async (e) => {
 
   const presetKey    = document.getElementById("inp-preset").value;
   const tolerance    = parseInt(document.getElementById("inp-tol").value, 10);
+  const cameraChoice = document.getElementById("inp-camera")?.value || "user";
+  currentFacingMode  = cameraChoice;
   const holdDuration = 0;
 
   btnStart.disabled = true;
@@ -631,6 +664,21 @@ document.getElementById("btn-retake").addEventListener("click", () => {
 
 document.getElementById("btn-done").addEventListener("click", downloadZip);
 document.getElementById("btn-dl-zip").addEventListener("click", downloadZip);
+
+// Tombol Switch Kamera (Depan / Belakang)
+if (btnSwitchCam) {
+  btnSwitchCam.addEventListener("click", async () => {
+    btnSwitchCam.disabled = true;
+    const nextFacing = (currentFacingMode === "user") ? "environment" : "user";
+    try {
+      await startCamera(nextFacing);
+    } catch (err) {
+      alert("Gagal beralih kamera:\n" + err.message);
+    } finally {
+      btnSwitchCam.disabled = false;
+    }
+  });
+}
 
 // Checklist toggle
 document.getElementById("cl-toggle").addEventListener("click", () => {
