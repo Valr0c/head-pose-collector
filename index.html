@@ -37,35 +37,35 @@
         </div>
 
         <div class="field">
-          <label>Toleransi Sudut Yaw: <strong id="lbl-tol">4</strong>°</label>
+          <label>Toleransi Sudut Yaw: <strong id="lbl-tol">5</strong>°</label>
           <input type="range" id="inp-tol" min="2" max="10" value="5" />
         </div>
 
         <div class="field">
-          <label>Toleransi Pitch: <strong id="lbl-pitch-tol">12</strong>°</label>
+          <label>Toleransi Pitch: <strong id="lbl-pitch-tol">15</strong>°</label>
           <input type="range" id="inp-pitch-tol" min="2" max="30" value="15" />
         </div>
 
         <div class="field">
-          <label>Toleransi Roll: <strong id="lbl-roll-tol">12</strong>°</label>
+          <label>Toleransi Roll: <strong id="lbl-roll-tol">15</strong>°</label>
           <input type="range" id="inp-roll-tol" min="2" max="30" value="15" />
         </div>
 
         <div class="field guide-settings">
-          <label>Lebar Kotak Panduan: <strong id="lbl-guide-width">35</strong>% layar</label>
-          <input type="range" id="inp-guide-width" min="20" max="80" value="35" />
+          <label>Lebar Kotak Panduan: <strong id="lbl-guide-width">70</strong>% layar</label>
+          <input type="range" id="inp-guide-width" min="20" max="80" value="70" />
           <label>Tinggi Kotak Panduan: <strong id="lbl-guide-height">55</strong>% layar</label>
           <input type="range" id="inp-guide-height" min="30" max="90" value="55" />
-          <label>Geser Kotak Vertikal: <strong id="lbl-guide-offset">15</strong> px</label>
-          <input type="range" id="inp-guide-offset" min="-150" max="150" step="5" value="15" />
+          <label>Geser Kotak Vertikal: <strong id="lbl-guide-offset">0</strong> px</label>
+          <input type="range" id="inp-guide-offset" min="-150" max="150" step="5" value="0" />
           <small>Seluruh kepala harus masuk kotak ini; area yang sama dipakai untuk estimasi pose.</small>
         </div>
 
         <div class="field">
           <label for="inp-camera">Pilihan Kamera</label>
           <select id="inp-camera">
-            <option value="user" selected>Kamera Depan (Selfie)</option>
             <option value="environment">Kamera Belakang (Utama / Foto Orang Lain)</option>
+            <option value="user" selected>Kamera Depan (Selfie)</option>
           </select>
         </div>
 
