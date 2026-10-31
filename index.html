@@ -109,6 +109,19 @@
     <!-- Flash putih saat foto -->
     <div id="flash-overlay"></div>
 
+    <!-- Hasil foto: auto-capture berhenti sampai pengguna memilih tindakan. -->
+    <div id="photo-review" class="hidden" role="dialog" aria-modal="true" aria-label="Tinjau hasil foto">
+      <div class="review-card">
+        <div class="review-title">Foto berhasil diambil</div>
+        <img id="review-image" alt="Hasil foto yang baru diambil" />
+        <div id="review-pose" class="review-pose"></div>
+        <div class="review-actions">
+          <button id="btn-review-retake" type="button" class="review-btn retake">↺ Foto ulang</button>
+          <button id="btn-review-continue" type="button" class="review-btn continue">Lanjut →</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Top bar: info subjek + progress -->
     <div id="bar-top">
       <div id="top-left">

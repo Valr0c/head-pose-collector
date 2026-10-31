@@ -40,6 +40,9 @@ let rafId             = null;   // ID requestAnimationFrame loop
 let lastDetectMs      = 0;      // Timestamp inferensi terakhir (throttle ~10fps)
 let lastCaptureMs     = 0;      // Timestamp capture terakhir
 let lastPose          = { ok: false, yaw: 0, pitch: 0, roll: 0 };
+let reviewActive      = false;  // Auto-capture/deteksi berhenti saat hasil foto ditinjau
+let reviewTargetAngle = null;
+let reviewImageUrl    = null;
 
 let poseStatus          = {};         // { angle: { captured, filename, timestamp, measuredYaw, ... } }
 let currentTargetIndex  = 0;
@@ -67,6 +70,11 @@ const btnStart        = document.getElementById("btn-start");
 
 const video           = document.getElementById("video");
 const flashOverlay    = document.getElementById("flash-overlay");
+const photoReview     = document.getElementById("photo-review");
+const reviewImage     = document.getElementById("review-image");
+const reviewPose      = document.getElementById("review-pose");
+const btnReviewRetake = document.getElementById("btn-review-retake");
+const btnReviewContinue = document.getElementById("btn-review-continue");
 
 const topName         = document.getElementById("top-name");
 const topId           = document.getElementById("top-id");
@@ -290,6 +298,12 @@ async function startCamera(facing = currentFacingMode) {
 // ─────────────────────────────────────────────────────────────
 
 function capturePhoto(targetAngle, yaw, pitch, roll) {
+  // Kunci proses sejak frame pertama disalin. Ini mencegah satu pose memicu
+  // beberapa capture sebelum callback toBlob selesai.
+  if (reviewActive) return;
+  reviewActive = true;
+  reviewTargetAngle = targetAngle;
+
   const isFront = currentFacingMode === "user";
   capCtx.save();
   if (isFront) {
@@ -301,7 +315,11 @@ function capturePhoto(targetAngle, yaw, pitch, roll) {
   capCtx.restore();
 
   capCanvas.toBlob((blob) => {
-    if (!blob) return;
+    if (!blob) {
+      // Gagal mengenkode foto: buka kembali deteksi agar sesi tidak terkunci.
+      closePhotoReview();
+      return;
+    }
 
     const sign     = targetAngle >= 0 ? "+" : "";
     const filename = `yaw_${sign}${targetAngle}.jpg`;
@@ -324,14 +342,29 @@ function capturePhoto(targetAngle, yaw, pitch, roll) {
     updateChecklist();
     updateProgress();
 
-    // Maju ke pose berikutnya yang belum diambil
-    advanceTarget();
-
-    // Cek apakah semua sudah selesai
-    if (config.angles.every((a) => poseStatus[a]?.captured)) {
-      completeBanner.classList.remove("hidden");
-    }
+    showPhotoReview(blob, targetAngle, yaw, pitch, roll);
   }, "image/jpeg", 0.92);
+}
+
+function showPhotoReview(blob, targetAngle, yaw, pitch, roll) {
+  if (reviewImageUrl) URL.revokeObjectURL(reviewImageUrl);
+  reviewImageUrl = URL.createObjectURL(blob);
+  reviewImage.src = reviewImageUrl;
+  const sign = targetAngle >= 0 ? "+" : "";
+  reviewPose.textContent = `Target ${sign}${targetAngle}°  •  Yaw ${yaw >= 0 ? "+" : ""}${yaw.toFixed(1)}°`;
+  photoReview.classList.remove("hidden");
+}
+
+function closePhotoReview() {
+  photoReview.classList.add("hidden");
+  reviewImage.removeAttribute("src");
+  if (reviewImageUrl) URL.revokeObjectURL(reviewImageUrl);
+  reviewImageUrl = null;
+  reviewActive = false;
+  reviewTargetAngle = null;
+  lastPose = { ok: false, yaw: 0, pitch: 0, roll: 0 };
+  lastDetectMs = 0;
+  rafId = requestAnimationFrame(detectLoop);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -354,6 +387,10 @@ function advanceTarget() {
 // ─────────────────────────────────────────────────────────────
 
 async function detectLoop() {
+  // Setelah foto diambil, jangan jalankan inferensi lagi sampai pengguna
+  // menilai hasilnya. Ini juga menghentikan auto-capture pada target berikutnya.
+  if (reviewActive) return;
+
   if (!video.readyState || video.readyState < 2) {
     rafId = requestAnimationFrame(detectLoop);
     return;
@@ -400,7 +437,6 @@ async function detectLoop() {
     lastCaptureMs = now;
     holdStartMs = null;
     capturePhoto(targetAngle, yaw, pitch, roll);
-    rafId = requestAnimationFrame(detectLoop);
     return;
   } else if (matched && cooldownActive) {
     const elapsedCd = (now - lastCaptureMs);
@@ -597,6 +633,9 @@ async function startSession(cfg) {
   config.angles.forEach((a) => { poseStatus[a] = { captured: false }; });
   currentTargetIndex = 0;
   holdStartMs = null;
+  reviewActive = false;
+  reviewTargetAngle = null;
+  photoReview.classList.add("hidden");
   lastPose = { ok: false, yaw: 0, pitch: 0, roll: 0 };
   completeBanner.classList.add("hidden");
 
@@ -705,15 +744,33 @@ document.getElementById("btn-next").addEventListener("click", () => {
   updateChecklist();
 });
 
-document.getElementById("btn-shutter").addEventListener("click", async () => {
-  if (!poseSession || !videoStream) return;
+document.getElementById("btn-shutter").addEventListener("click", () => {
+  if (!poseSession || !videoStream || reviewActive) return;
   const targetAngle = config.angles[currentTargetIndex];
-  let yaw = 0, pitch = 0, roll = 0;
-  try {
-    const estimated = await estimatePoseFromGuide();
-    if (estimated) ({ yaw, pitch, roll } = estimated);
-  } catch (_) {}
-  capturePhoto(targetAngle, yaw, pitch, roll);
+  // Pakai hasil inferensi terakhir. Tidak menunggu inferensi baru agar tombol
+  // manual langsung mengunci proses capture dan tidak berbenturan dengan loop.
+  capturePhoto(targetAngle, lastPose.yaw, lastPose.pitch, lastPose.roll);
+});
+
+btnReviewRetake.addEventListener("click", () => {
+  const target = reviewTargetAngle;
+  if (target === null) return;
+  if (poseStatus[target]) poseStatus[target].captured = false;
+  capturedPhotos.delete(target);
+  completeBanner.classList.add("hidden");
+  updateChecklist();
+  updateProgress();
+  closePhotoReview();
+});
+
+btnReviewContinue.addEventListener("click", () => {
+  if (reviewTargetAngle === null) return;
+  advanceTarget();
+  updateChecklist();
+  if (config.angles.every((a) => poseStatus[a]?.captured)) {
+    completeBanner.classList.remove("hidden");
+  }
+  closePhotoReview();
 });
 
 document.getElementById("btn-retake").addEventListener("click", () => {

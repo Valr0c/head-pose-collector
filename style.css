@@ -283,6 +283,51 @@ html, body {
   100% { opacity: 0; }
 }
 
+/* Tinjauan hasil foto. Lapisan ini menahan interaksi kamera sehingga satu
+   auto-capture hanya berlaku untuk satu target sampai pengguna mengonfirmasi. */
+#photo-review {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(2, 6, 23, 0.88);
+  z-index: 110;
+}
+#photo-review.hidden { display: none; }
+.review-card {
+  width: min(100%, 390px);
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.42);
+}
+.review-title { font-size: 1rem; font-weight: 700; text-align: center; margin-bottom: 10px; }
+#review-image {
+  display: block;
+  width: 100%;
+  max-height: 54dvh;
+  object-fit: contain;
+  background: #020617;
+  border-radius: 8px;
+}
+.review-pose { color: var(--muted); font-size: 0.78rem; text-align: center; margin: 10px 0 14px; }
+.review-actions { display: flex; gap: 10px; }
+.review-btn {
+  flex: 1;
+  min-height: 44px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.review-btn.retake { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.review-btn.continue { background: var(--green); color: #052e16; }
+
 /* ---- TOP BAR ---- */
 #bar-top {
   position: absolute;
