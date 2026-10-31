@@ -696,7 +696,7 @@ registerForm.addEventListener("submit", async (e) => {
   const guideOffsetY = parseInt(document.getElementById("inp-guide-offset").value, 10);
   const cameraChoice = document.getElementById("inp-camera")?.value || "user";
   currentFacingMode  = cameraChoice;
-  const holdDuration = 0;
+  const holdDuration = 0.5;
 
   btnStart.disabled = true;
   loadingBox.classList.remove("hidden");
