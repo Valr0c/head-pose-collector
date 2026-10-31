@@ -13,7 +13,9 @@
  *  5. Saat selesai → semua foto dikemas jadi 1 file .zip → download ke HP/laptop
  */
 
-import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/ort.min.mjs";
+// Bundle lengkap diperlukan agar backend WebGPU tersedia untuk model dengan
+// external weights (pose_estimator.data).
+import * as ort from "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.all.min.mjs";
 
 // ─────────────────────────────────────────────────────────────
 // PRESET SUDUT POSE
@@ -237,14 +239,15 @@ function triggerFlash() {
 // ─────────────────────────────────────────────────────────────
 
 async function initPoseEstimator() {
-  // Mode WASM kompatibel untuk browser desktop maupun mobile. Model memakai
-  // external data file (.data) di folder yang sama dengan file ONNX.
-  ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/";
-  ort.env.wasm.numThreads = 1;
+  // Backend WASM tidak dapat mount external data untuk model ini. WebGPU
+  // diperlukan agar pose_estimator.data tersedia saat sesi dibuat.
+  if (!navigator.gpu) {
+    throw new Error("Browser ini belum mendukung WebGPU. Gunakan Chrome atau Edge versi terbaru.");
+  }
   poseSession = await ort.InferenceSession.create(
     POSE_MODEL_URL,
     {
-      executionProviders: ["wasm"],
+      executionProviders: ["webgpu"],
       // Browser tidak dapat membaca file system seperti Python. Nama `path`
       // harus identik dengan location di dalam file ONNX; `data` adalah URL
       // sebenarnya tempat bobot 157 MB diambil.
