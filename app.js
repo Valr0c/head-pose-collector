@@ -27,8 +27,6 @@ const PRESETS = {
   quick:    { name: "Ringkas (5 Poses)",             angles: [-45, -20, 0, 20, 45] },
 };
 
-const PITCH_TOL = 12.0; // Toleransi pitch longgar agar gerakan alami kepala tidak terhambat
-const ROLL_TOL  = 12.0; // Toleransi roll longgar
 const CAPTURE_COOLDOWN_MS = 1500; // Cooldown 1.5 detik setelah foto untuk cegah jepret ganda
 
 // ─────────────────────────────────────────────────────────────
@@ -41,6 +39,7 @@ let currentFacingMode = "user"; // "user" (kamera depan) atau "environment" (kam
 let rafId             = null;   // ID requestAnimationFrame loop
 let lastDetectMs      = 0;      // Timestamp deteksi terakhir (throttle 30fps)
 let lastCaptureMs     = 0;      // Timestamp capture terakhir
+let lastPose          = { ok: false, yaw: 0, pitch: 0, roll: 0 };
 
 let poseStatus          = {};         // { angle: { captured, filename, timestamp, measuredYaw, ... } }
 let currentTargetIndex  = 0;
@@ -52,6 +51,8 @@ const capturedPhotos    = new Map();  // angle → { blob, filename } — disimp
 // Canvas tersembunyi untuk menangkap frame bersih dari video
 const capCanvas = document.createElement("canvas");
 const capCtx    = capCanvas.getContext("2d");
+const guideCanvas = document.createElement("canvas");
+const guideCtx    = guideCanvas.getContext("2d");
 
 // ─────────────────────────────────────────────────────────────
 // REFERENSI DOM
@@ -123,6 +124,47 @@ function matToEuler(m) {
       roll:  0,
     };
   }
+}
+
+/**
+ * Menyalin area yang tepat berada di dalam kotak panduan ke canvas.
+ * Canvas inilah yang menjadi input pose estimator, bukan seluruh frame kamera.
+ */
+function getGuideCrop() {
+  if (!video.videoWidth || !video.videoHeight || !centerGuide) return null;
+
+  const videoRect = video.getBoundingClientRect();
+  const guideRect = centerGuide.getBoundingClientRect();
+  if (!videoRect.width || !videoRect.height || !guideRect.width || !guideRect.height) return null;
+
+  // object-fit: cover: hitung pemetaan area tampilan ke piksel video asli.
+  const scale = Math.max(videoRect.width / video.videoWidth, videoRect.height / video.videoHeight);
+  const renderedW = video.videoWidth * scale;
+  const renderedH = video.videoHeight * scale;
+  const padX = (videoRect.width - renderedW) / 2;
+  const padY = (videoRect.height - renderedH) / 2;
+
+  let sx = (guideRect.left - videoRect.left - padX) / scale;
+  let sy = (guideRect.top - videoRect.top - padY) / scale;
+  let sw = guideRect.width / scale;
+  let sh = guideRect.height / scale;
+  sx = Math.max(0, sx);
+  sy = Math.max(0, sy);
+  sw = Math.min(sw, video.videoWidth - sx);
+  sh = Math.min(sh, video.videoHeight - sy);
+  if (sw < 20 || sh < 20) return null;
+
+  guideCanvas.width = Math.round(sw);
+  guideCanvas.height = Math.round(sh);
+  guideCtx.drawImage(video, sx, sy, sw, sh, 0, 0, guideCanvas.width, guideCanvas.height);
+  return guideCanvas;
+}
+
+function applyGuideSettings() {
+  if (!config || !centerGuide) return;
+  centerGuide.style.setProperty("--guide-width", `${config.guideWidthPct}%`);
+  centerGuide.style.setProperty("--guide-height", `${config.guideHeightPct}%`);
+  centerGuide.style.setProperty("--guide-offset-y", `${config.guideOffsetY}px`);
 }
 
 /** Bunyi beep singkat menggunakan Web Audio API. */
@@ -294,49 +336,29 @@ function detectLoop() {
 
   const now = performance.now();
 
-  let faceOk = false, yaw = 0, pitch = 0, roll = 0;
-  let isCentered = false, centerMsg = "";
+  let { ok: poseOk, yaw, pitch, roll } = lastPose;
 
   // Throttle deteksi ke ~30fps untuk hemat CPU
   if (now - lastDetectMs > 33) {
     lastDetectMs = now;
     try {
-      const res = faceLandmarker.detectForVideo(video, now);
+      const guideCrop = getGuideCrop();
+      if (!guideCrop) throw new Error("Kotak panduan belum siap");
+      const res = faceLandmarker.detectForVideo(guideCrop, now);
       const mats = res.facialTransformationMatrixes;
       if (mats?.length > 0) {
-        faceOk = true;
+        poseOk = true;
         const e = matToEuler(mats[0].data);
         pitch = e.pitch; yaw = e.yaw; roll = e.roll;
+        lastPose = { ok: true, yaw, pitch, roll };
+      } else {
+        poseOk = false;
+        lastPose = { ok: false, yaw: 0, pitch: 0, roll: 0 };
       }
-      if (res.faceLandmarks?.[0]) {
-        faceOk = true;
-        const lm = res.faceLandmarks[0];
-        // Posisi hidung (index 1) untuk koordinat pusat wajah
-        const rawX = lm[1].x;
-        const rawY = lm[1].y;
-        // Kamera depan di-mirror (scaleX(-1)), kamera belakang tidak di-mirror
-        const isFront = currentFacingMode === "user";
-        const screenX = isFront ? (1.0 - rawX) : rawX;
-        const screenY = rawY;
-
-        // Toleransi tengah layar
-        const tolX = 0.17;
-        const tolY = 0.22;
-        const dx = screenX - 0.5;
-        const dy = screenY - 0.5;
-
-        isCentered = Math.abs(dx) <= tolX && Math.abs(dy) <= tolY;
-        if (!isCentered) {
-          if (Math.abs(dx) > tolX) {
-            centerMsg = dx < 0 ? "Geser kepala ke KANAN kotak" : "Geser kepala ke KIRI kotak";
-          } else if (Math.abs(dy) > tolY) {
-            centerMsg = dy < 0 ? "Turunkan sedikit posisi kepala" : "Naikkan sedikit posisi kepala";
-          } else {
-            centerMsg = "Posisikan kepala di tengah kotak panduan";
-          }
-        }
-      }
-    } catch (_) {}
+    } catch (_) {
+      poseOk = false;
+      lastPose = { ok: false, yaw: 0, pitch: 0, roll: 0 };
+    }
   }
 
   const targetAngle = config.angles[currentTargetIndex];
@@ -344,9 +366,9 @@ function detectLoop() {
   const yawDiff     = yaw - targetAngle;
 
   const yawOk     = Math.abs(yawDiff) <= config.tolerance;
-  const pitchOk   = Math.abs(pitch)   <= PITCH_TOL;
-  const rollOk    = Math.abs(roll)    <= ROLL_TOL;
-  const matched   = faceOk && isCentered && yawOk && pitchOk && rollOk && !alreadyDone;
+  const pitchOk   = Math.abs(pitch)   <= config.pitchTolerance;
+  const rollOk    = Math.abs(roll)    <= config.rollTolerance;
+  const matched   = poseOk && yawOk && pitchOk && rollOk && !alreadyDone;
 
   const cooldownActive = (now - lastCaptureMs) < CAPTURE_COOLDOWN_MS;
   let progress = 0;
@@ -365,7 +387,7 @@ function detectLoop() {
     progress = 0;
   }
 
-  renderHUD(faceOk, yaw, pitch, roll, targetAngle, matched, alreadyDone, progress, yawDiff, isCentered, centerMsg);
+  renderHUD(poseOk, yaw, pitch, roll, targetAngle, matched, alreadyDone, progress, yawDiff);
   rafId = requestAnimationFrame(detectLoop);
 }
 
@@ -373,18 +395,18 @@ function detectLoop() {
 // RENDER HUD
 // ─────────────────────────────────────────────────────────────
 
-function renderHUD(faceOk, yaw, pitch, roll, targetAngle, matched, done, progress, yawDiff, isCentered, centerMsg) {
+function renderHUD(poseOk, yaw, pitch, roll, targetAngle, matched, done, progress, yawDiff) {
   // Update status kotak panduan tengah (viewfinder)
   if (centerGuide && guideStatus) {
-    if (!faceOk) {
+    if (!poseOk) {
       centerGuide.className = "";
-      guideStatus.textContent = "Posisikan kepala di dalam kotak";
-    } else if (isCentered) {
+      guideStatus.textContent = "Jaga seluruh kepala di dalam kotak";
+    } else if (matched) {
       centerGuide.className = "guide-centered";
-      guideStatus.textContent = "Posisi Tengah: OKE";
+      guideStatus.textContent = "Pose sesuai — kepala tetap di dalam kotak";
     } else {
-      centerGuide.className = "guide-warning";
-      guideStatus.textContent = centerMsg || "Arahkan kepala ke tengah kotak";
+      centerGuide.className = "";
+      guideStatus.textContent = "Area kotak sedang diproses";
     }
   }
 
@@ -402,11 +424,8 @@ function renderHUD(faceOk, yaw, pitch, roll, targetAngle, matched, done, progres
   if (done) {
     instr = "✓ Sudah diambil. Pilih pose lain atau [↺] foto ulang.";
     instrColor = "var(--muted)";
-  } else if (!faceOk) {
-    instr = "Mencari wajah… Hadap ke kamera";
-  } else if (!isCentered) {
-    instr = centerMsg || "Posisikan kepala ke tengah kotak panduan!";
-    instrColor = "var(--yellow)";
+  } else if (!poseOk) {
+    instr = "Pastikan kepala terlihat penuh di dalam kotak panduan";
   } else if (matched) {
     instr = "🟢 PAS! Foto diambil...";
     instrColor = "var(--green)";
@@ -415,9 +434,9 @@ function renderHUD(faceOk, yaw, pitch, roll, targetAngle, matched, done, progres
       instr = yawDiff < 0
         ? `Tengok ke KANAN (+${Math.abs(yawDiff).toFixed(0)}°)`
         : `Tengok ke KIRI (${Math.abs(yawDiff).toFixed(0)}°)`;
-    } else if (Math.abs(pitch) > PITCH_TOL) {
+    } else if (Math.abs(pitch) > config.pitchTolerance) {
       instr = "Tegakkan kepala — jangan mendongak / menunduk";
-    } else if (Math.abs(roll) > ROLL_TOL) {
+    } else if (Math.abs(roll) > config.rollTolerance) {
       instr = "Luruskan kepala — jangan miring";
     } else {
       instr = "Arahkan ke sudut target";
@@ -431,14 +450,14 @@ function renderHUD(faceOk, yaw, pitch, roll, targetAngle, matched, done, progres
   holdFill.style.width = `${progress * 100}%`;
 
   // Sudut aktual
-  if (faceOk) {
+  if (poseOk) {
     const fmt = (v) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}°`;
     valYaw.textContent   = fmt(yaw);
     valPitch.textContent = fmt(pitch);
     valRoll.textContent  = fmt(roll);
     valYaw.style.color   = Math.abs(yaw - config.angles[currentTargetIndex]) <= config.tolerance ? "var(--green)" : "var(--text)";
-    valPitch.style.color = Math.abs(pitch) <= PITCH_TOL ? "var(--green)" : "var(--yellow)";
-    valRoll.style.color  = Math.abs(roll)  <= ROLL_TOL  ? "var(--green)" : "var(--yellow)";
+    valPitch.style.color = Math.abs(pitch) <= config.pitchTolerance ? "var(--green)" : "var(--yellow)";
+    valRoll.style.color  = Math.abs(roll)  <= config.rollTolerance ? "var(--green)" : "var(--yellow)";
   } else {
     [valYaw, valPitch, valRoll].forEach((el) => { el.textContent = "—"; el.style.color = "var(--muted)"; });
   }
@@ -511,8 +530,11 @@ async function downloadZip() {
     preset:        PRESETS[config.presetKey].name,
     angles:        config.angles,
     tolerance_yaw: config.tolerance,
-    tolerance_pitch: PITCH_TOL,
-    tolerance_roll:  ROLL_TOL,
+    tolerance_pitch: config.pitchTolerance,
+    tolerance_roll:  config.rollTolerance,
+    guide_width_pct: config.guideWidthPct,
+    guide_height_pct: config.guideHeightPct,
+    guide_offset_y: config.guideOffsetY,
     total_targets:   config.angles.length,
     total_captured:  capturedPhotos.size,
     photos: config.angles.map((ang) => ({
@@ -544,6 +566,7 @@ async function downloadZip() {
 
 async function startSession(cfg) {
   config = cfg;
+  applyGuideSettings();
 
   // Reset state
   poseStatus = {};
@@ -551,6 +574,7 @@ async function startSession(cfg) {
   config.angles.forEach((a) => { poseStatus[a] = { captured: false }; });
   currentTargetIndex = 0;
   holdStartMs = null;
+  lastPose = { ok: false, yaw: 0, pitch: 0, roll: 0 };
   completeBanner.classList.add("hidden");
 
   // Top bar
@@ -585,6 +609,17 @@ async function startSession(cfg) {
 document.getElementById("inp-tol").addEventListener("input", (e) => {
   document.getElementById("lbl-tol").textContent = e.target.value;
 });
+[
+  ["inp-pitch-tol", "lbl-pitch-tol"],
+  ["inp-roll-tol", "lbl-roll-tol"],
+  ["inp-guide-width", "lbl-guide-width"],
+  ["inp-guide-height", "lbl-guide-height"],
+  ["inp-guide-offset", "lbl-guide-offset"],
+].forEach(([inputId, labelId]) => {
+  document.getElementById(inputId).addEventListener("input", (e) => {
+    document.getElementById(labelId).textContent = e.target.value;
+  });
+});
 registerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const rawName = document.getElementById("inp-name").value.trim();
@@ -592,6 +627,11 @@ registerForm.addEventListener("submit", async (e) => {
 
   const presetKey    = document.getElementById("inp-preset").value;
   const tolerance    = parseInt(document.getElementById("inp-tol").value, 10);
+  const pitchTolerance = parseInt(document.getElementById("inp-pitch-tol").value, 10);
+  const rollTolerance = parseInt(document.getElementById("inp-roll-tol").value, 10);
+  const guideWidthPct = parseInt(document.getElementById("inp-guide-width").value, 10);
+  const guideHeightPct = parseInt(document.getElementById("inp-guide-height").value, 10);
+  const guideOffsetY = parseInt(document.getElementById("inp-guide-offset").value, 10);
   const cameraChoice = document.getElementById("inp-camera")?.value || "user";
   currentFacingMode  = cameraChoice;
   const holdDuration = 0;
@@ -617,6 +657,11 @@ registerForm.addEventListener("submit", async (e) => {
     presetKey,
     angles:       PRESETS[presetKey].angles,
     tolerance,
+    pitchTolerance,
+    rollTolerance,
+    guideWidthPct,
+    guideHeightPct,
+    guideOffsetY,
     holdDuration,
   });
 });
@@ -642,7 +687,9 @@ document.getElementById("btn-shutter").addEventListener("click", () => {
   const targetAngle = config.angles[currentTargetIndex];
   let yaw = 0, pitch = 0, roll = 0;
   try {
-    const res = faceLandmarker.detectForVideo(video, performance.now());
+    const guideCrop = getGuideCrop();
+    if (!guideCrop) throw new Error("Kotak panduan belum siap");
+    const res = faceLandmarker.detectForVideo(guideCrop, performance.now());
     if (res.facialTransformationMatrixes?.length > 0) {
       const e = matToEuler(res.facialTransformationMatrixes[0].data);
       yaw = e.yaw; pitch = e.pitch; roll = e.roll;
