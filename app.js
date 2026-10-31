@@ -27,6 +27,7 @@ const PRESETS = {
 const CAPTURE_COOLDOWN_MS = 1500; // Cooldown 1.5 detik setelah foto untuk cegah jepret ganda
 // Model besar di-host terpisah agar GitHub Pages tidak terkena batas ukuran file.
 const POSE_MODEL_URL = "https://huggingface.co/AxVxRxA/headpose-6drepnet/resolve/main/pose_estimator.onnx";
+const POSE_DATA_URL = "https://huggingface.co/AxVxRxA/headpose-6drepnet/resolve/main/pose_estimator.data";
 
 // ─────────────────────────────────────────────────────────────
 // STATE GLOBAL
@@ -242,7 +243,13 @@ async function initPoseEstimator() {
   ort.env.wasm.numThreads = 1;
   poseSession = await ort.InferenceSession.create(
     POSE_MODEL_URL,
-    { executionProviders: ["wasm"] }
+    {
+      executionProviders: ["wasm"],
+      // Browser tidak dapat membaca file system seperti Python. Nama `path`
+      // harus identik dengan location di dalam file ONNX; `data` adalah URL
+      // sebenarnya tempat bobot 157 MB diambil.
+      externalData: [{ path: "pose_estimator.data", data: POSE_DATA_URL }],
+    }
   );
 }
 
